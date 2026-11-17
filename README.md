@@ -1,56 +1,129 @@
 # FieldLink
 
-Offline-first guidance for responders, HQ, and civilians. Local models classify situations while vetted, stored guidance supplies the actions. The responder product relays compact sitreps to HQ; the separate civilian product builds a private action plan when internet service is unavailable.
+**Offline-first disaster guidance that keeps local AI behind a deterministic safety boundary.**
 
-## Why this shape
+[![Watch the 20-second FieldLink demo](media/fieldlink-demo.jpg)](media/fieldlink-demo.mp4)
 
-Analog radio is synchronous and expensive. A 2 KB structured update is asynchronous and cheap. Voice stays reserved for true escalations.
+▶ **[Watch the 20-second product demo](media/fieldlink-demo.mp4)**
 
-The model never authors medical advice. It emits `protocol`, `triage_level`, and `condition_tags`. Directive text always comes from `source: "protocol_table"`. If the model and a protocol lexicon disagree, the system escalates rather than acting.
+FieldLink was built at HackMIT 2026 to explore a practical question: what can useful software still do when disaster infrastructure and cloud access fails? The system combines local classification with stored, source-attributed guidance for civilians, field responders, and command teams.
 
-Demo protocols: drowning/CPR, massive hemorrhage, and an explicit out-of-scope refusal.
+> FieldLink is a hackathon prototype for educational demonstration. It is not a medical device and does not replace emergency services or qualified professional guidance.
 
-## Workspaces
+## What it does
 
-| Package | Owner | Role |
-| --- | --- | --- |
-| `packages/contract` | shared | Zod schemas, JSON Schema for QVAC, fixtures |
-| `packages/triage` | Dev C | `ScriptedEngine`, `QvacEngine`, protocol table, lexicon |
-| `packages/transport` | Dev B | Envelope, outbox retry/dedupe, `NET_PROFILE` |
-| `packages/evals` | Dev C | Phrase corpus |
-| `apps/responder` | Dev A | Field unit UI + API |
-| `apps/hq` | Dev A | Command dashboard + ingest |
-| `apps/civilian` | standalone | Offline civilian disaster planner + Ollama adapter |
+FieldLink provides two connected experiences:
 
-## Commands
+- **Civilian guidance:** a private local assistant turns a situation description and household needs into prioritized offline guide cards.
+- **Responder relay:** a field unit classifies a compact situation report, loads instructions from a fixed protocol table, and relays a structured payload to an HQ dashboard.
 
-```bash
-npm install
-ENGINE=scripted npm test
-ENGINE=scripted npm run gate
-ENGINE=scripted npm run dev:responder
-npm run dev:hq
-npm run dev:civilian   # Meta Llama through local Ollama
-npm run models:prefetch   # optional, while online
+The important boundary is deliberate: models select structured identifiers; they do not author the safety steps shown to users.
+
+## Key features
+
+- Runs the civilian planning flow locally through Ollama and Meta Llama 3.2.
+- Applies deterministic overrides for immediately dangerous phrases before assembling a plan.
+- Restricts model output to known guide IDs and validated structured fields.
+- Loads displayed actions from stored guide cards attributed to CDC, Ready.gov, FDA, and the American Red Cross.
+- Supports local browser voice capture and on-device speech transcription.
+- Relays Zod-validated field reports through retrying, deduplicating transport.
+- Restricts responder egress to loopback or Thunderbolt link-local addresses.
+- Aggregates received reports by triage level in the HQ dashboard.
+- Includes unit, UI, evaluation, offline-guard, and end-to-end tests.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Civilian["Civilian application"]
+        CUI[React interface]
+        CAPI[Hono local API]
+        CHECKS[Deterministic checks]
+        LLM[Ollama + Llama 3.2]
+        GUIDES[Stored guide cards]
+
+        CUI --> CAPI
+        CAPI --> CHECKS
+        CHECKS --> LLM
+        LLM -->|validated guide IDs| GUIDES
+        CHECKS -->|forced safety matches| GUIDES
+        GUIDES --> CUI
+    end
+
+    subgraph Field["Responder application"]
+        RUI[React field unit]
+        RAPI[Hono local API]
+        ENGINE[Scripted or QVAC classifier]
+        PROTOCOLS[Fixed protocol table]
+        OUTBOX[Retrying outbox]
+
+        RUI --> RAPI --> ENGINE
+        ENGINE -->|protocol + triage + tags| PROTOCOLS
+        PROTOCOLS --> OUTBOX
+    end
+
+    subgraph Command["HQ application"]
+        INBOX[Deduplicating inbox]
+        HQ[React command dashboard]
+        INBOX --> HQ
+    end
+
+    OUTBOX -->|structured FieldReport| INBOX
 ```
 
-`@qvac/sdk` is optional. Default `ENGINE=scripted` needs no native binaries. To swap in the real local model:
+## Technology
+
+| Area | Technologies |
+| --- | --- |
+| Frontend | React 19, TypeScript, Vite |
+| Local APIs | Hono, `@hono/node-server` |
+| AI and speech | Ollama, Meta Llama 3.2, QVAC, Transformers.js, Whisper Tiny |
+| Validation | Zod, JSON Schema |
+| Testing | Vitest, Testing Library, jsdom |
+| Tooling | ESLint, TypeScript, npm workspaces, Husky |
+
+## Safety-oriented design
+
+FieldLink separates probabilistic classification from deterministic action text:
+
+1. The input is checked for explicit danger patterns and supported scenario candidates.
+2. A local model ranks only known guide or protocol identifiers.
+3. The response is validated and filtered against those candidates.
+4. Displayed actions are loaded from a stored protocol or guide table.
+5. Unsupported responder situations escalate instead of producing improvised instructions.
+
+This architecture reduces—but does not eliminate—the risks of using a language model in a safety-sensitive prototype.
+
+## My contributions
+
+- Built the initial civilian application: local API, planning pipeline, guide catalog, React interface, tests, and setup documentation.
+- Integrated local Ollama inference and conversational-intent handling.
+- Added browser voice capture, local transcription, model prefetching, and fallback handling.
+- Implemented deterministic safety routing, structured diagnostics, request trace IDs, and degraded-response behavior.
+- Developed the guided conversation flow and major civilian/responder interface updates.
+- Improved responder Whisper startup and clean-install behavior for optional local-model tooling.
+
+FieldLink was a collaborative hackathon project. These bullets describe work supported by commit history; they do not imply sole authorship of the system.
+
+## Getting started
+
+### Requirements
+
+- Node.js 22.17 or newer
+- npm 10 or newer
+- Ollama for the real civilian local-model path
+
+### Install
 
 ```bash
-npm i @qvac/sdk -w @fieldlink/triage
-npm run models:prefetch
-ENGINE=qvac npm run dev:responder
+git clone https://github.com/yashvasdev/fieldlink.git
+cd fieldlink
+npm ci
 ```
 
-`npm test` is Vitest at the root (`projects`). The slow `evals-qvac` project is opt-in:
+### Run the civilian application with local Llama
 
-```bash
-EVAL_ENGINE=qvac npm run test:qvac
-```
-
-## Civilian local Meta AI
-
-Install [Ollama](https://ollama.com/download), then download the model while online:
+Download the model once while online:
 
 ```bash
 ollama pull llama3.2:1b-instruct-q4_K_M
@@ -63,44 +136,89 @@ $env:CIVILIAN_ENGINE="ollama"
 npm run dev:civilian
 ```
 
-macOS/Linux:
+macOS or Linux:
 
 ```bash
 CIVILIAN_ENGINE=ollama npm run dev:civilian
 ```
 
-Open http://127.0.0.1:3002. Once the status says **Local AI ready**, disconnect Wi-Fi and use the app normally. The browser talks only to the local FieldLink server, which talks to Ollama at `127.0.0.1:11434`.
+Open <http://127.0.0.1:3002> and wait for **Local AI ready**.
 
-For a rehearsal without Ollama, use the visible scripted kill switch:
+For UI development without Ollama, use the explicit scripted fallback. Do not present this mode as a live Llama run.
 
 ```powershell
 $env:CIVILIAN_ENGINE="scripted"
 npm run dev:civilian
 ```
 
-The model returns only validated guide IDs and situation categories. All displayed safety steps are loaded from the civilian app's offline CDC, Ready.gov, FDA, and American Red Cross guide cards.
+### Run responder and HQ
 
-For structured terminal diagnostics, restart with debug logging enabled. This logs full prompts and raw model JSON locally, so use it only with demo data:
+Start HQ:
 
-```powershell
-$env:CIVILIAN_DEBUG="1"
-$env:CIVILIAN_ENGINE="ollama"
-npm run dev:civilian
+```bash
+npm run dev:hq
 ```
 
-Each `/api/plan` response includes a short trace ID that matches the terminal events for deterministic routing, Ollama attempts, parsed output, safety filtering, and the final guide list.
+In a second terminal, start the demo-safe responder engine:
 
-## Environment
+```powershell
+$env:ENGINE="scripted"
+$env:NET_PROFILE="clean"
+npm run dev:responder
+```
 
-See `.env.example`.
+- Responder: <http://127.0.0.1:3000>
+- HQ: <http://127.0.0.1:3001>
 
-- `ENGINE=scripted|qvac`
-- `NET_PROFILE=clean|degraded|hostile`
-- `HQ_INGEST_URL=http://127.0.0.1:3001/api/ingest` (Thunderbolt: `http://169.254.x.x:3001/api/ingest`)
-- `CIVILIAN_ENGINE=ollama|scripted`
-- `OLLAMA_URL=http://127.0.0.1:11434`
-- `OLLAMA_MODEL=llama3.2:1b-instruct-q4_K_M`
+The QVAC path requires its local weights and runtime to be prefetched before going offline:
 
-## Demo
+```bash
+npm run models:prefetch
+```
 
-Step-by-step stage notes live in [DEMO.md](DEMO.md).
+Then run with `ENGINE=qvac` using the environment-variable syntax for your shell.
+
+## Verification
+
+```bash
+npm run lint
+npm run typecheck
+ENGINE=scripted npm test
+```
+
+PowerShell equivalent:
+
+```powershell
+npm run lint
+npm run typecheck
+$env:ENGINE="scripted"
+npm test
+```
+
+The real QVAC evaluation is opt-in:
+
+```bash
+EVAL_ENGINE=qvac npm run test:qvac
+```
+
+## Known limitations
+
+- This is a hackathon prototype, not production emergency software.
+- HQ reports and transport deduplication are stored in memory.
+- The physical Thunderbolt workflow and real QVAC inference require compatible hardware and local model assets.
+- Communications-savings figures in the dashboard are estimates based on fixed assumptions, not field measurements.
+- Stored safety content requires qualified review and an update process before real-world deployment.
+
+## Team and attribution
+
+FieldLink was developed collaboratively at **HackMIT 2026** by:
+
+- [Yash Vasdev](https://github.com/yashvasdev)
+- [Ramika De Silva](https://github.com/RamikaDeSilva)
+- [Jagathi Moturi](https://github.com/jagathimoturi)
+
+This portfolio fork preserves the original Git history and contributors. The upstream team repository is [RamikaDeSilva/fieldlink](https://github.com/RamikaDeSilva/fieldlink).
+
+## License status
+
+The upstream repository does not currently declare a software license. The repository remains subject to the rights and permissions of its contributors; contact the team before redistributing or reusing the code outside GitHub's fork functionality.
