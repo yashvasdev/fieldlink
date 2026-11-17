@@ -1,0 +1,1 @@
+FieldLink turns local inference into structured, source-attributed disaster guidance—without sending the situation to the cloud. Built at HackMIT 2026.
